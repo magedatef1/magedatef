@@ -1,16 +1,17 @@
 import os
 import logging
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
-    ContextTypes,
 )
 
 # ==========================================
-# إعدادات التسجيل
+# Logging
 # ==========================================
 
 logging.basicConfig(
@@ -22,11 +23,19 @@ logger = logging.getLogger(__name__)
 
 
 # ==========================================
-# التحقق من المستخدم
+# Environment Variables
 # ==========================================
 
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 
+if not TOKEN:
+    raise RuntimeError("TELEGRAM_BOT_TOKEN غير موجود")
+
+
+# ==========================================
+# التحقق من المدير
+# ==========================================
 
 def is_admin(user_id: int) -> bool:
     if not ADMIN_ID:
@@ -39,69 +48,44 @@ def is_admin(user_id: int) -> bool:
 
 
 # ==========================================
-# /start
+# HTTP Server لـ Render
 # ==========================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
+class HealthHandler(BaseHTTPRequestHandler):
 
-    if not user or not is_admin(user.id):
-        await update.message.reply_text(
-            "⛔ غير مصرح لك باستخدام هذا البوت."
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(
+            b"Social Manager Bot is running."
         )
+
+    def log_message(self, format, *args):
         return
 
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "🔗 الحسابات",
-                callback_data="accounts"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "📤 نشر محتوى",
-                callback_data="publish"
-            ),
-            InlineKeyboardButton(
-                "💬 التعليقات",
-                callback_data="comments"
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                "🤖 الرد التلقائي",
-                callback_data="auto_reply"
-            ),
-            InlineKeyboardButton(
-                "📊 الإحصائيات",
-                callback_data="stats"
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                "⚙️ الإعدادات",
-                callback_data="settings"
-            )
-        ],
-    ]
 
-    await update.message.reply_text(
-        "🤖 *Social Manager*\n\n"
-        "مرحبًا بك في لوحة التحكم.\n\n"
-        "سنستخدم هذا البوت لإدارة حساباتك "
-        "ومتابعة التعليقات والردود تلقائيًا.\n\n"
-        "اختر من القائمة:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
+def start_health_server():
+    port = int(os.getenv("PORT", "10000"))
+
+    server = HTTPServer(
+        ("0.0.0.0", port),
+        HealthHandler
     )
+
+    logger.info(
+        f"Health server running on port {port}"
+    )
+
+    server.serve_forever()
 
 
 # ==========================================
-# زر الرجوع للقائمة الرئيسية
+# القائمة الرئيسية
 # ==========================================
 
 def main_menu_keyboard():
+
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
@@ -117,7 +101,7 @@ def main_menu_keyboard():
             InlineKeyboardButton(
                 "💬 التعليقات",
                 callback_data="comments"
-            ),
+            )
         ],
         [
             InlineKeyboardButton(
@@ -127,25 +111,59 @@ def main_menu_keyboard():
             InlineKeyboardButton(
                 "📊 الإحصائيات",
                 callback_data="stats"
-            ),
+            )
         ],
         [
             InlineKeyboardButton(
                 "⚙️ الإعدادات",
                 callback_data="settings"
             )
-        ],
+        ]
     ])
 
 
 # ==========================================
-# معالجة الأزرار
+# /start
+# ==========================================
+
+async def start(
+    update: Update,
+    context
+):
+
+    user = update.effective_user
+
+    if not user:
+        return
+
+    if not is_admin(user.id):
+
+        await update.message.reply_text(
+            "⛔ غير مصرح لك باستخدام هذا البوت."
+        )
+
+        return
+
+    await update.message.reply_text(
+        "🤖 *Social Manager*\n\n"
+        "مرحبًا بك في لوحة التحكم.\n\n"
+        "سنستخدم هذا البوت لإدارة حساباتك "
+        "على منصات التواصل الاجتماعي.\n\n"
+        "اختر من القائمة:",
+        reply_markup=main_menu_keyboard(),
+        parse_mode="Markdown"
+    )
+
+
+# ==========================================
+# التعامل مع الأزرار
 # ==========================================
 
 async def button_handler(
     update: Update,
-    context: ContextTypes.DEFAULT_TYPE
+    context
 ):
+
     query = update.callback_query
 
     await query.answer()
@@ -153,10 +171,16 @@ async def button_handler(
     user = query.from_user
 
     if not is_admin(user.id):
+
         await query.edit_message_text(
             "⛔ غير مصرح لك باستخدام هذا البوت."
         )
+
         return
+
+    # --------------------------------------
+    # الحسابات
+    # --------------------------------------
 
     if query.data == "accounts":
 
@@ -190,28 +214,40 @@ async def button_handler(
                     "⬅️ الرئيسية",
                     callback_data="home"
                 )
-            ],
+            ]
         ]
 
         await query.edit_message_text(
             "🔗 *إدارة الحسابات*\n\n"
-            "الحسابات التي سنربطها بالنظام:\n\n"
+
             "📘 Facebook — 🔴 غير متصل\n"
             "📸 Instagram — 🔴 غير متصل\n"
             "▶️ YouTube — 🔴 غير متصل\n"
             "💼 LinkedIn — 🔴 غير متصل\n\n"
-            "سنضيف الربط الرسمي OAuth لكل منصة لاحقًا.",
+
+            "سنضيف الربط الرسمي لكل منصة "
+            "بعد تشغيل البوت.",
             reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown",
+            parse_mode="Markdown"
         )
+
+    # --------------------------------------
+    # نشر
+    # --------------------------------------
 
     elif query.data == "publish":
 
         await query.edit_message_text(
             "📤 *نشر المحتوى*\n\n"
-            "هذه الوظيفة سنبنيها بعد الانتهاء من ربط الحسابات.\n\n"
-            "سيكون بإمكانك لاحقًا إرسال صورة أو فيديو "
-            "وكتابة النص واختيار المنصات.",
+
+            "سيتمكن النظام لاحقًا من:\n\n"
+
+            "📷 إرسال صورة\n"
+            "🎥 إرسال فيديو\n"
+            "✍️ كتابة الوصف\n"
+            "📱 اختيار المنصات\n"
+            "📅 جدولة النشر",
+            
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
@@ -220,15 +256,27 @@ async def button_handler(
                     )
                 ]
             ]),
-            parse_mode="Markdown",
+            parse_mode="Markdown"
         )
+
+    # --------------------------------------
+    # التعليقات
+    # --------------------------------------
 
     elif query.data == "comments":
 
         await query.edit_message_text(
             "💬 *إدارة التعليقات*\n\n"
-            "النظام سيستقبل التعليقات من المنصات "
-            "المرتبطة، ثم يحدد اللغة ويجهز الرد.",
+
+            "سيقوم النظام لاحقًا بـ:\n\n"
+
+            "📥 استقبال التعليقات\n"
+            "🌍 معرفة لغة التعليق\n"
+            "🧠 تحليل التعليق\n"
+            "🤖 إنشاء الرد\n"
+            "📤 نشر الرد\n"
+            "📝 تسجيل العملية",
+
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
@@ -237,20 +285,27 @@ async def button_handler(
                     )
                 ]
             ]),
-            parse_mode="Markdown",
+            parse_mode="Markdown"
         )
+
+    # --------------------------------------
+    # الرد التلقائي
+    # --------------------------------------
 
     elif query.data == "auto_reply":
 
         await query.edit_message_text(
             "🤖 *الرد التلقائي*\n\n"
-            "سيتم بناء النظام بحيث:\n\n"
-            "🌍 يكتشف لغة التعليق\n"
-            "🧠 يستخدم الذكاء الاصطناعي لإنشاء الرد\n"
-            "💬 يرد بنفس لغة المستخدم\n"
-            "🛡️ يمنع الردود المكررة\n"
-            "🔔 يرسل لك التنبيهات المهمة\n\n"
-            "سنفعّل هذه الوظيفة بعد ربط المنصات.",
+
+            "النظام الذي سنبنيه سيقوم بـ:\n\n"
+
+            "🌍 اكتشاف لغة التعليق\n"
+            "🧠 استخدام الذكاء الاصطناعي\n"
+            "💬 الرد بنفس لغة المستخدم\n"
+            "🛡️ منع الردود المكررة\n"
+            "⏱️ التحكم في سرعة الرد\n"
+            "🔔 إرسال التنبيهات المهمة",
+
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
@@ -259,19 +314,26 @@ async def button_handler(
                     )
                 ]
             ]),
-            parse_mode="Markdown",
+            parse_mode="Markdown"
         )
+
+    # --------------------------------------
+    # الإحصائيات
+    # --------------------------------------
 
     elif query.data == "stats":
 
         await query.edit_message_text(
             "📊 *الإحصائيات*\n\n"
-            "ستظهر هنا لاحقًا إحصائيات:\n\n"
+
+            "سيتم إضافة:\n\n"
+
             "📤 المنشورات\n"
             "💬 التعليقات\n"
             "🤖 الردود\n"
             "🌍 اللغات\n"
-            "📱 أداء كل منصة",
+            "📱 إحصائيات كل منصة",
+
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
@@ -280,19 +342,26 @@ async def button_handler(
                     )
                 ]
             ]),
-            parse_mode="Markdown",
+            parse_mode="Markdown"
         )
+
+    # --------------------------------------
+    # الإعدادات
+    # --------------------------------------
 
     elif query.data == "settings":
 
         await query.edit_message_text(
             "⚙️ *الإعدادات*\n\n"
-            "سنضع هنا لاحقًا:\n\n"
-            "🤖 تشغيل/إيقاف الرد التلقائي\n"
+
+            "سيتم إضافة:\n\n"
+
+            "🤖 تشغيل / إيقاف الرد التلقائي\n"
             "🌍 اللغات\n"
             "🧠 إعدادات الذكاء الاصطناعي\n"
-            "🛡️ حماية من التكرار\n"
+            "🛡️ الحماية\n"
             "🔔 الإشعارات",
+
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
@@ -301,8 +370,12 @@ async def button_handler(
                     )
                 ]
             ]),
-            parse_mode="Markdown",
+            parse_mode="Markdown"
         )
+
+    # --------------------------------------
+    # ربط المنصات
+    # --------------------------------------
 
     elif query.data.startswith("connect_"):
 
@@ -315,7 +388,7 @@ async def button_handler(
             "facebook": "Facebook",
             "instagram": "Instagram",
             "youtube": "YouTube",
-            "linkedin": "LinkedIn",
+            "linkedin": "LinkedIn"
         }
 
         platform_name = names.get(
@@ -325,10 +398,14 @@ async def button_handler(
 
         await query.edit_message_text(
             f"🔗 *ربط {platform_name}*\n\n"
-            "هذه الخطوة ستكون عبر OAuth الرسمي.\n\n"
-            "لن نطلب منك كلمة مرور حسابك، "
-            "ولن نضع كلمات المرور داخل GitHub.\n\n"
-            "سنبرمج زر الربط الفعلي بعد تشغيل البوت.",
+
+            "سيتم فتح صفحة تسجيل الدخول "
+            "الرسمية للمنصة هنا لاحقًا.\n\n"
+
+            "🔐 لن نطلب كلمة المرور منك.\n"
+            "🔐 لن نضع بيانات الحساب في GitHub.\n"
+            "🔐 سيتم استخدام OAuth الرسمي.",
+
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
@@ -337,16 +414,21 @@ async def button_handler(
                     )
                 ]
             ]),
-            parse_mode="Markdown",
+            parse_mode="Markdown"
         )
+
+    # --------------------------------------
+    # الرئيسية
+    # --------------------------------------
 
     elif query.data == "home":
 
         await query.edit_message_text(
             "🤖 *Social Manager*\n\n"
             "اختر من لوحة التحكم:",
+
             reply_markup=main_menu_keyboard(),
-            parse_mode="Markdown",
+            parse_mode="Markdown"
         )
 
 
@@ -355,36 +437,50 @@ async def button_handler(
 # ==========================================
 
 def main():
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
 
-    if not token:
-        raise RuntimeError(
-            "TELEGRAM_BOT_TOKEN غير موجود في Environment Variables"
-        )
+    logger.info("Starting Social Manager Bot...")
 
+    # تشغيل خادم Render
+    health_thread = threading.Thread(
+        target=start_health_server,
+        daemon=True
+    )
+
+    health_thread.start()
+
+    # إنشاء تطبيق Telegram
     application = (
         Application.builder()
-        .token(token)
+        .token(TOKEN)
         .build()
     )
 
+    # Handlers
     application.add_handler(
-        CommandHandler("start", start)
+        CommandHandler(
+            "start",
+            start
+        )
     )
 
     application.add_handler(
-        CallbackQueryHandler(button_handler)
+        CallbackQueryHandler(
+            button_handler
+        )
     )
 
-    logger.info("Telegram bot is starting...")
+    logger.info(
+        "Telegram bot is starting..."
+    )
 
+    # تشغيل Telegram
     application.run_polling(
         drop_pending_updates=True
     )
 
 
 # ==========================================
-# نقطة البداية
+# Start
 # ==========================================
 
 if __name__ == "__main__":
