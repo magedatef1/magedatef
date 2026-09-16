@@ -1,0 +1,14 @@
+.env
+
+__pycache__/
+*.pyc
+*.pyo
+
+*.db
+*.sqlite
+*.sqlite3
+
+storage/media/*
+storage/uploads/*
+
+logs/*
